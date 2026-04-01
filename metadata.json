@@ -1,0 +1,5 @@
+{
+  "name": "AIPL Guide Chatbot",
+  "description": "A specialized chatbot to guide you through the AI Product Lifecycle (AIPL) phases: Ideation, Opportunity, Concept, Testing, Roll-out, and Monitoring.",
+  "requestFramePermissions": []
+}
