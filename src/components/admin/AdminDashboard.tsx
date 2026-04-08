@@ -41,8 +41,8 @@ export default function AdminDashboard() {
         fetchHealth(),
       ]);
       setDashboard(dashData);
-      setUsers(usersData.users || []);
-      setGuardrailLogs(guardrailsData.logs || []);
+      setUsers(usersData?.users || []);
+      setGuardrailLogs(guardrailsData?.logs || []);
       setActivityLogs(activityData);
       setFeedback(feedbackData);
       setHealth(healthData);
