@@ -145,13 +145,16 @@ router.get('/feedback', async (req, res) => {
     `metrics:feedback:phase:${p}:negative`,
   ]);
 
-  const [totalFeedback, positive, negative, ...phaseValues] = await Promise.all([
+  const [totalFeedback, positive, negative, ...rest] = await Promise.all([
     redis.get('metrics:feedback:total'),
     redis.get('metrics:feedback:positive'),
     redis.get('metrics:feedback:negative'),
     ...feedbackKeys.map(k => redis.get(k)),
+    redis.lrange('log:feedback', 0, 49).then(list => list.map(s => JSON.parse(s))),
   ]);
 
+  const logs = rest.pop() as unknown[];
+  const phaseValues = rest as (string | null)[];
   const byPhase: Record<string, { positive: number; negative: number }> = {};
   VALID_PHASES.forEach((p, i) => {
     byPhase[p] = {
@@ -159,8 +162,6 @@ router.get('/feedback', async (req, res) => {
       negative: parseInt(phaseValues[i * 2 + 1] || '0'),
     };
   });
-
-  const logs = (await redis.lrange('log:feedback', 0, 49)).map(s => JSON.parse(s));
 
   res.json({
     total: parseInt(totalFeedback || '0'),
