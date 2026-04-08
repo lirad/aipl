@@ -18,6 +18,7 @@ import { cn } from './lib/utils';
 import type { Phase, Message } from './types';
 import { PHASES, HEARTBEAT_INTERVAL_MS, STORAGE_KEYS } from './data/constants';
 import { startSession, heartbeat, trackFeedback } from './services/analytics';
+import { isGeminiConfigured } from './services/gemini';
 import { useLocalStorage } from './hooks/useLocalStorage';
 import { useDeliverables } from './hooks/useDeliverables';
 import { useChat } from './hooks/useChat';
@@ -151,6 +152,16 @@ export default function App() {
             <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-blue-200">{PHASE_ICONS[currentPhase]}</div>
           </div>
         </header>
+
+        {!isGeminiConfigured && (
+          <div className="bg-amber-50 border-b border-amber-200 px-6 py-3 flex items-center gap-3 text-sm">
+            <span className="text-amber-600 font-bold text-xs uppercase tracking-widest">API Key Missing</span>
+            <span className="text-amber-700">
+              Add your Gemini API key to <code className="bg-amber-100 px-1.5 py-0.5 rounded font-mono text-xs">.env</code> as <code className="bg-amber-100 px-1.5 py-0.5 rounded font-mono text-xs">VITE_GEMINI_API_KEY</code>.
+              Get a free key at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" className="underline font-semibold hover:text-amber-900">aistudio.google.com/apikey</a>
+            </span>
+          </div>
+        )}
 
         {/* View Switcher */}
         <div className="flex-1 overflow-hidden flex flex-col">
