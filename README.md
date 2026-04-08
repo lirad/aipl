@@ -59,7 +59,7 @@ Open http://localhost:3000
 
 ## Deploy to Cloud (Railway)
 
-[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/template/YOUR_TEMPLATE)
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/new/template?template=https%3A%2F%2Fgithub.com%2Flirad%2Faipl&envs=VITE_GEMINI_API_KEY&VITE_GEMINI_API_KEYDesc=Your+Gemini+API+key+from+aistudio.google.com%2Fapikey)
 
 The Railway template provisions:
 - Node.js service (Express + React)
