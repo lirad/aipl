@@ -1,6 +1,9 @@
 import type { Phase } from '../types';
 
-const API_BASE = '/api';
+// In cloud mode, VITE_API_URL points to the backend.
+// In local mode (no VITE_API_URL), analytics are silent no-ops.
+const API_URL = import.meta.env.VITE_API_URL || '';
+const API_AVAILABLE = Boolean(API_URL);
 
 function getSessionId(): string {
   let sid = localStorage.getItem('aipl_session_id');
@@ -11,79 +14,66 @@ function getSessionId(): string {
   return sid;
 }
 
+/**
+ * Fire-and-forget POST to the analytics API.
+ * In local mode (no VITE_API_URL), all tracking calls are silent no-ops.
+ */
 async function post(path: string, body: Record<string, unknown>) {
+  if (!API_AVAILABLE) return;
   try {
-    await fetch(`${API_BASE}${path}`, {
+    await fetch(`${API_URL}${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sessionId: getSessionId(), ...body }),
     });
   } catch {
-    // silently fail — analytics should never break the app
+    // Intentionally silent — analytics must never break the app
   }
 }
 
-export async function startSession() {
-  await post('/session/start', { userAgent: navigator.userAgent });
+export function startSession() {
+  post('/api/session/start', { userAgent: navigator.userAgent });
 }
 
-export async function heartbeat(currentPhase: Phase) {
-  await post('/session/heartbeat', { currentPhase });
+export function heartbeat(currentPhase: Phase) {
+  post('/api/session/heartbeat', { currentPhase });
 }
 
-export async function trackMessage(phase: Phase, role: 'user' | 'model', content?: string) {
-  await post('/track/message', { phase, role, content });
+export function trackMessage(phase: Phase, role: 'user' | 'model', content?: string) {
+  post('/api/track/message', { phase, role, content });
 }
 
-export async function trackFeedback(phase: Phase, rating: 'positive' | 'negative', messagePreview: string) {
-  await post('/track/feedback', { phase, rating, messagePreview });
+export function trackFeedback(phase: Phase, rating: 'positive' | 'negative', messagePreview: string) {
+  post('/api/track/feedback', { phase, rating, messagePreview });
 }
 
-export async function trackPhaseComplete(phase: Phase) {
-  await post('/track/phase-complete', { phase });
+export function trackPhaseComplete(phase: Phase) {
+  post('/api/track/phase-complete', { phase });
 }
 
-export async function trackGuardrail(
+export function trackGuardrail(
   type: string,
   layer: 'input' | 'output',
   description: string,
   severity: 'low' | 'medium' | 'high' = 'medium'
 ) {
-  await post('/track/guardrail', { type, layer, description, severity });
+  post('/api/track/guardrail', { type, layer, description, severity });
 }
 
-export async function trackLatency(latencyMs: number, phase: Phase) {
-  await post('/track/latency', { latencyMs, phase });
+export function trackLatency(latencyMs: number, phase: Phase) {
+  post('/api/track/latency', { latencyMs, phase });
 }
 
-// ── Admin Fetchers ──
-
-export async function fetchDashboard() {
-  const res = await fetch(`${API_BASE}/admin/dashboard`);
+// Admin fetchers — return null in local mode
+async function adminFetch(path: string) {
+  if (!API_AVAILABLE) return null;
+  const res = await fetch(`${API_URL}${path}`);
   return res.json();
 }
 
-export async function fetchUsers() {
-  const res = await fetch(`${API_BASE}/admin/users`);
-  return res.json();
-}
-
-export async function fetchGuardrails() {
-  const res = await fetch(`${API_BASE}/admin/guardrails`);
-  return res.json();
-}
-
-export async function fetchActivity() {
-  const res = await fetch(`${API_BASE}/admin/activity`);
-  return res.json();
-}
-
-export async function fetchFeedback() {
-  const res = await fetch(`${API_BASE}/admin/feedback`);
-  return res.json();
-}
-
-export async function fetchHealth() {
-  const res = await fetch(`${API_BASE}/health`);
-  return res.json();
-}
+export function fetchDashboard() { return adminFetch('/api/admin/dashboard'); }
+export function fetchUsers() { return adminFetch('/api/admin/users'); }
+export function fetchGuardrails() { return adminFetch('/api/admin/guardrails'); }
+export function fetchActivity() { return adminFetch('/api/admin/activity'); }
+export function fetchFeedback() { return adminFetch('/api/admin/feedback'); }
+export function fetchHealth() { return adminFetch('/api/health'); }

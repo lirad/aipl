@@ -2,7 +2,7 @@ import { GoogleGenAI, Type, Modality } from "@google/genai";
 import type { Phase, Deliverable } from "../types";
 import { PHASE_DETAILS } from "../data/phases";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY || '' });
 
 export async function reformatDeliverableContent(content: string, label: string): Promise<string> {
   try {
