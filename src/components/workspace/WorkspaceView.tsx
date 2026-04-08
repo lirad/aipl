@@ -5,7 +5,6 @@ import {
   Info,
   Lightbulb,
   ArrowRight,
-  Save,
   LayoutDashboard,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
@@ -183,10 +182,7 @@ export function WorkspaceView({
                 >
                   Voltar ao Chat
                 </button>
-                <button className="px-8 py-3 bg-blue-600 text-white rounded-2xl text-sm font-bold shadow-lg shadow-blue-200 hover:bg-blue-700 transition-all flex items-center gap-2">
-                  <Save className="w-4 h-4" />
-                  Salvar Alteracoes
-                </button>
+                {/* Save is automatic via localStorage on every keystroke */}
               </div>
             </motion.div>
           ) : (

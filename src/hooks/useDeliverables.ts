@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { Phase, Deliverable } from '../types';
-import { PHASES } from '../data/constants';
+import { PHASES, STORAGE_KEYS } from '../data/constants';
 import { PHASE_DETAILS } from '../data/phases';
 import { reformatDeliverableContent } from '../services/gemini';
 
@@ -15,7 +15,7 @@ import { reformatDeliverableContent } from '../services/gemini';
  */
 export function useDeliverables() {
   const [deliverablesByPhase, setDeliverablesByPhase] = useState<Record<Phase, Deliverable[]>>(() => {
-    const saved = localStorage.getItem('aipl_deliverables');
+    const saved = localStorage.getItem(STORAGE_KEYS.deliverables);
     const initial: Record<string, Deliverable[]> = saved ? JSON.parse(saved) : {};
 
     // Sync deliverables with latest PHASE_DETAILS (handles new/removed deliverables)
@@ -36,11 +36,16 @@ export function useDeliverables() {
 
   // Persist to localStorage
   useEffect(() => {
-    localStorage.setItem('aipl_deliverables', JSON.stringify(deliverablesByPhase));
+    localStorage.setItem(STORAGE_KEYS.deliverables, JSON.stringify(deliverablesByPhase));
   }, [deliverablesByPhase]);
 
-  // Reformat existing completed deliverables that look poorly formatted (one-time on mount)
+  // Reformat completed deliverables that lack markdown formatting (once on mount).
+  // Uses a ref guard to prevent double-invocation in React strict mode.
+  const reformatRanRef = useRef(false);
   useEffect(() => {
+    if (reformatRanRef.current) return;
+    reformatRanRef.current = true;
+
     PHASES.forEach(phase => {
       const dels = deliverablesByPhase[phase] || [];
       dels.forEach(d => {
@@ -58,7 +63,7 @@ export function useDeliverables() {
         }
       });
     });
-  }, []); // Run once on mount
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** Reset all deliverables in a given phase to their initial (pending) state. */
   const resetPhaseDeliverables = (phase: Phase) => {
