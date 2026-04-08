@@ -4,7 +4,15 @@
 
 Built for [Escola Tera](https://somostera.com)'s AI Product Management course.
 
-[screenshot placeholder]
+### AI Mentor — Chat View
+The Gemini-powered mentor guides students through each phase, asking expert questions and auto-filling deliverables from the conversation.
+
+![Chat View — AI mentor guiding a student through the Ideation phase](docs/images/chat-view.png)
+
+### Admin Dashboard — Real-time Analytics
+Monitor usage across all students: sessions, messages, phase completions, guardrail events, and daily active users.
+
+![Admin Dashboard — KPIs, messages per phase, completion funnel, and DAU chart](docs/images/admin-dashboard.png)
 
 ## What is AIPL?
 
