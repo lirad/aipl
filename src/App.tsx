@@ -1,6 +1,6 @@
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
+import {
   Send,
   Bot,
   User,
@@ -35,9 +35,11 @@ import { cn } from './lib/utils';
 import type { Phase, Message, Deliverable } from './types';
 import { PHASES } from './data/constants';
 import { PHASE_DETAILS } from './data/phases';
-import { buildPhaseWelcome, PHASE_ONBOARDING, PHASE_START_PROMPTS } from './data/prompts';
-import { getChatResponse, reformatDeliverableContent } from './services/gemini';
-import { startSession, heartbeat, trackMessage, trackPhaseComplete, trackLatency, trackFeedback } from './services/analytics';
+import { PHASE_ONBOARDING } from './data/prompts';
+import { startSession, heartbeat, trackFeedback } from './services/analytics';
+import { useLocalStorage } from './hooks/useLocalStorage';
+import { useDeliverables } from './hooks/useDeliverables';
+import { useChat } from './hooks/useChat';
 import DocumentExport from './DocumentExport';
 import AdminDashboard from './AdminDashboard';
 
@@ -63,51 +65,25 @@ export default function App() {
   const [currentPhase, setCurrentPhase] = useState<Phase>('Ideation');
   const [view, setView] = useState<'chat' | 'workspace' | 'document' | 'admin'>('chat');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  
-  // State for all phases
-  const [messagesByPhase, setMessagesByPhase] = useState<Record<Phase, Message[]>>(() => {
-    const saved = localStorage.getItem('aipl_messages');
-    const initial: any = saved ? JSON.parse(saved) : {};
-
-    // Ensure every phase has at least an empty array (welcome messages injected via useEffect)
-    PHASES.forEach(p => {
-      if (!initial[p]) {
-        initial[p] = [];
-      }
-    });
-    return initial;
-  });
-
-  const [deliverablesByPhase, setDeliverablesByPhase] = useState<Record<Phase, Deliverable[]>>(() => {
-    const saved = localStorage.getItem('aipl_deliverables');
-    const initial: any = saved ? JSON.parse(saved) : {};
-
-    // Sync deliverables with latest PHASE_DETAILS (handles new/removed deliverables)
-    PHASE_DETAILS.forEach(p => {
-      if (!initial[p.id]) {
-        initial[p.id] = p.deliverables;
-      } else {
-        // Merge: keep completed status from saved, add any new deliverables
-        const savedIds = new Set(initial[p.id].map((d: Deliverable) => d.id));
-        const freshDeliverables = p.deliverables.map(fresh => {
-          const existing = initial[p.id].find((d: Deliverable) => d.id === fresh.id);
-          return existing ? { ...fresh, content: existing.content, status: existing.status } : fresh;
-        });
-        initial[p.id] = freshDeliverables;
-      }
-    });
-    return initial;
-  });
-
-  const [input, setInput] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
   const [activeDeliverableId, setActiveDeliverableId] = useState<string | null>(null);
-  const [feedbackGiven, setFeedbackGiven] = useState<Record<string, 'positive' | 'negative'>>(() => {
-    const saved = localStorage.getItem('aipl_feedback');
-    return saved ? JSON.parse(saved) : {};
-  });
+  const [feedbackGiven, setFeedbackGiven] = useLocalStorage<Record<string, 'positive' | 'negative'>>('aipl_feedback', {});
   const [isPreviewMode, setIsPreviewMode] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Hooks
+  const { deliverablesByPhase, setDeliverablesByPhase, resetPhaseDeliverables } = useDeliverables();
+
+  const {
+    messagesByPhase,
+    setMessagesByPhase,
+    input,
+    setInput,
+    isLoading,
+    messagesEndRef,
+    currentMessages,
+    handleSend,
+    handleStartPhase,
+    handleResetPhase: resetChatPhase,
+  } = useChat({ currentPhase, setCurrentPhase, deliverablesByPhase, setDeliverablesByPhase, view });
 
   // Analytics: session start + heartbeat
   useEffect(() => {
@@ -116,99 +92,11 @@ export default function App() {
     return () => clearInterval(interval);
   }, [currentPhase]);
 
-  // Inject dynamic welcome messages for phases that have no messages
-  useEffect(() => {
-    const updates: Partial<Record<Phase, Message[]>> = {};
-    PHASES.forEach(p => {
-      if (!messagesByPhase[p] || messagesByPhase[p].length === 0) {
-        updates[p] = [{
-          role: 'model',
-          content: buildPhaseWelcome(p, deliverablesByPhase, PHASE_DETAILS),
-          phase: p
-        }];
-      }
-    });
-    if (Object.keys(updates).length > 0) {
-      setMessagesByPhase(prev => ({ ...prev, ...updates }));
-    }
-  }, []); // Run once on mount
-
-  // Reformat existing completed deliverables that look poorly formatted (one-time on mount)
-  useEffect(() => {
-    PHASES.forEach(phase => {
-      const dels = deliverablesByPhase[phase] || [];
-      dels.forEach(d => {
-        if (d.status === 'completed' && d.content && !d.content.includes('**')) {
-          reformatDeliverableContent(d.content, d.label).then(formatted => {
-            if (formatted !== d.content) {
-              setDeliverablesByPhase(prev => ({
-                ...prev,
-                [phase]: prev[phase].map(dd =>
-                  dd.id === d.id ? { ...dd, content: formatted } : dd
-                )
-              }));
-            }
-          });
-        }
-      });
-    });
-  }, []); // Run once on mount
-
-  // Refresh welcome message when switching to a phase with only the welcome message
-  useEffect(() => {
-    const msgs = messagesByPhase[currentPhase];
-    if (msgs && msgs.length === 1 && msgs[0].role === 'model') {
-      const freshWelcome = buildPhaseWelcome(currentPhase, deliverablesByPhase, PHASE_DETAILS);
-      if (msgs[0].content !== freshWelcome) {
-        setMessagesByPhase(prev => ({
-          ...prev,
-          [currentPhase]: [{ role: 'model', content: freshWelcome, phase: currentPhase }]
-        }));
-      }
-    }
-  }, [currentPhase]);
-
+  // Combined reset: chat messages + deliverables
   const handleResetPhase = () => {
-    setMessagesByPhase(prev => ({
-      ...prev,
-      [currentPhase]: [{
-        role: 'model',
-        content: buildPhaseWelcome(currentPhase, deliverablesByPhase, PHASE_DETAILS),
-        phase: currentPhase
-      }]
-    }));
-
-    setDeliverablesByPhase(prev => {
-      const initialPhaseDetails = PHASE_DETAILS.find(p => p.id === currentPhase);
-      if (!initialPhaseDetails) return prev;
-      
-      return {
-        ...prev,
-        [currentPhase]: initialPhaseDetails.deliverables.map(d => ({
-          ...d,
-          content: '',
-          status: 'pending'
-        }))
-      };
-    });
+    resetChatPhase();
+    resetPhaseDeliverables(currentPhase);
   };
-
-  const handleStartPhase = async () => {
-    handleSend(PHASE_START_PROMPTS[currentPhase]);
-  };
-
-  // Auto-save to localStorage
-  useEffect(() => {
-    localStorage.setItem('aipl_messages', JSON.stringify(messagesByPhase));
-  }, [messagesByPhase]);
-
-  useEffect(() => {
-    localStorage.setItem('aipl_deliverables', JSON.stringify(deliverablesByPhase));
-  }, [deliverablesByPhase]);
-
-  useEffect(() => {
-    localStorage.setItem('aipl_feedback', JSON.stringify(feedbackGiven));
-  }, [feedbackGiven]);
 
   const handleFeedback = (messageIndex: number, rating: 'positive' | 'negative') => {
     const key = `${currentPhase}:${messageIndex}`;
@@ -216,14 +104,6 @@ export default function App() {
     const msg = currentMessages[messageIndex];
     trackFeedback(currentPhase, rating, msg?.content || '');
   };
-
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
-
-  useEffect(() => {
-    if (view === 'chat') scrollToBottom();
-  }, [messagesByPhase, view, currentPhase]);
 
   const goToNextPhase = () => {
     const currentIndex = PHASES.indexOf(currentPhase);
@@ -233,176 +113,13 @@ export default function App() {
     }
   };
 
-  const currentMessages = messagesByPhase[currentPhase];
   const currentDeliverables = deliverablesByPhase[currentPhase];
   const allCompleted = currentDeliverables.every(d => d.status === 'completed');
-
-  const handleSend = async (customInput?: string | React.MouseEvent) => {
-    const textToSend = typeof customInput === 'string' ? customInput : input;
-    if (!textToSend.trim() || isLoading) return;
-
-    // Detect manual phase change requests
-    const phaseKeywords: Record<string, Phase> = {
-      'ideation': 'Ideation',
-      'fase 1': 'Ideation',
-      'etapa 1': 'Ideation',
-      'opportunity': 'Opportunity',
-      'fase 2': 'Opportunity',
-      'etapa 2': 'Opportunity',
-      'concept': 'Concept/Prototype',
-      'prototype': 'Concept/Prototype',
-      'fase 3': 'Concept/Prototype',
-      'etapa 3': 'Concept/Prototype',
-      'testing': 'Testing & Analysis',
-      'analysis': 'Testing & Analysis',
-      'fase 4': 'Testing & Analysis',
-      'etapa 4': 'Testing & Analysis',
-      'roll-out': 'Roll-out',
-      'fase 5': 'Roll-out',
-      'etapa 5': 'Roll-out',
-      'monitoring': 'Monitoring',
-      'fase 6': 'Monitoring',
-      'etapa 6': 'Monitoring',
-    };
-
-    const lowerInput = textToSend.toLowerCase();
-    let targetPhase: Phase | null = null;
-    
-    for (const [kw, phase] of Object.entries(phaseKeywords)) {
-      const includesPhase = lowerInput.includes(kw);
-      const isChangeRequest = lowerInput.includes('vamos') || lowerInput.includes('mudar') || lowerInput.includes('ir para');
-      const isClarification = lowerInput.includes('estamos na') || lowerInput.includes('ainda na') || lowerInput.includes('voltar para');
-      
-      if (includesPhase && (isChangeRequest || isClarification)) {
-        targetPhase = phase;
-        break;
-      }
-    }
-
-    if (targetPhase && targetPhase !== currentPhase) {
-      setCurrentPhase(targetPhase);
-      // We still want to send the message to the new phase's context
-    }
-
-    const userMessage: Message = {
-      role: 'user',
-      content: textToSend,
-      phase: currentPhase
-    };
-
-    setMessagesByPhase(prev => ({
-      ...prev,
-      [currentPhase]: [...prev[currentPhase], userMessage]
-    }));
-    setInput('');
-    setIsLoading(true);
-
-    try {
-      trackMessage(currentPhase, 'user', textToSend);
-
-      const history = [...messagesByPhase[currentPhase], userMessage].map(m => ({
-        role: m.role as 'user' | 'model',
-        parts: [{ text: m.content }]
-      }));
-
-      const responsePromise = getChatResponse(history, currentPhase, deliverablesByPhase);
-
-      // Increased timeout to 120s to handle complex reasoning or slow network (Google Search can be slow)
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("Timeout: A IA demorou muito para responder (120s).")), 120000)
-      );
-
-      console.log("Waiting for Gemini response (timeout set to 120s)...");
-      const startTime = Date.now();
-      const response = await Promise.race([responsePromise, timeoutPromise]) as any;
-      trackLatency(Date.now() - startTime, currentPhase);
-      trackMessage(currentPhase, 'model', response.text);
-      console.log("Full AI Response Object:", response);
-      
-      const modelMessage: Message = {
-        role: 'model',
-        content: response.text,
-        phase: currentPhase
-      };
-
-      setMessagesByPhase(prev => ({
-        ...prev,
-        [currentPhase]: [...prev[currentPhase], modelMessage]
-      }));
-
-      if (response.deliverableUpdates && response.deliverableUpdates.length > 0) {
-        // Reformat each deliverable content via LLM in background
-        for (const update of response.deliverableUpdates) {
-          const del = deliverablesByPhase[currentPhase].find(d => d.id === update.id);
-          reformatDeliverableContent(update.content, del?.label || update.id).then(formatted => {
-            setDeliverablesByPhase(prev => ({
-              ...prev,
-              [currentPhase]: prev[currentPhase].map(d =>
-                d.id === update.id ? { ...d, content: formatted } : d
-              )
-            }));
-          });
-        }
-
-        setDeliverablesByPhase(prev => {
-          const newDeliverables = { ...prev };
-          const updatedPhaseDeliverables = newDeliverables[currentPhase].map(d => {
-            const update = response.deliverableUpdates.find((u: any) => u.id === d.id);
-            return update ? { ...d, content: update.content, status: 'completed' as const } : d;
-          });
-          newDeliverables[currentPhase] = updatedPhaseDeliverables;
-          
-          // Check if all are completed after update
-          const allDone = updatedPhaseDeliverables.every(d => d.status === 'completed');
-          if (allDone) {
-            trackPhaseComplete(currentPhase);
-            // Add a small delay to let the user see the last response before the "congrats" message
-            setTimeout(() => {
-              const nextPhase = PHASES[PHASES.indexOf(currentPhase) + 1];
-              if (nextPhase) {
-                setMessagesByPhase(m => {
-                  const currentMsgs = m[currentPhase];
-                  const alreadyCongrats = currentMsgs.some(msg => msg.content.includes("Parabéns!") && msg.content.includes(currentPhase));
-                  if (alreadyCongrats) return m;
-
-                  const congratsMessage: Message = {
-                    role: 'model',
-                    content: `🎉 **Parabéns!** Você concluiu todos os entregáveis da fase **${currentPhase}**. \n\nDeseja avançar para a próxima fase: **${nextPhase}**?`,
-                    phase: currentPhase
-                  };
-                  
-                  return {
-                    ...m,
-                    [currentPhase]: [...currentMsgs, congratsMessage]
-                  };
-                });
-              }
-            }, 1500);
-          }
-          
-          return newDeliverables;
-        });
-      }
-    } catch (error) {
-      console.error("Error getting chat response:", error);
-      const errorMessage = error instanceof Error ? error.message : "Desculpe, ocorreu um erro ao processar sua mensagem.";
-      setMessagesByPhase(prev => ({
-        ...prev,
-        [currentPhase]: [...prev[currentPhase], {
-          role: 'model',
-          content: errorMessage,
-          phase: currentPhase
-        }]
-      }));
-    } finally {
-      setIsLoading(false);
-    }
-  };
 
   const updateDeliverable = (id: string, content: string) => {
     setDeliverablesByPhase(prev => {
       const newDeliverables = { ...prev };
-      const updatedPhaseDeliverables = newDeliverables[currentPhase].map(d => 
+      const updatedPhaseDeliverables = newDeliverables[currentPhase].map(d =>
         d.id === id ? { ...d, content, status: (content.trim() ? 'completed' : 'pending') as 'completed' | 'pending' } : d
       );
       newDeliverables[currentPhase] = updatedPhaseDeliverables;
@@ -422,7 +139,7 @@ export default function App() {
             const currentMsgs = m[currentPhase];
             const alreadyCongrats = currentMsgs.some(msg => msg.content.includes("Parabéns!") && msg.content.includes(currentPhase));
             if (alreadyCongrats) return m;
-            
+
             return {
               ...m,
               [currentPhase]: [...currentMsgs, congratsMessage]
@@ -440,11 +157,11 @@ export default function App() {
       .replace(/### Como preencher este documento:\n/, '')
       .replace(/\d\. \*\*(.*?)\*\*:/g, '## $1\n[Escreva aqui...]\n')
       .replace(/- \*\*(.*?)\*\*:/g, '- **$1**: [Escreva aqui...]');
-    
+
     updateDeliverable(deliverable.id, template);
   };
 
-  const activeDeliverable = useMemo(() => 
+  const activeDeliverable = useMemo(() =>
     currentDeliverables.find(d => d.id === activeDeliverableId),
     [currentDeliverables, activeDeliverableId]
   );
