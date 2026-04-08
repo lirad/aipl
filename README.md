@@ -41,7 +41,7 @@ Each phase has 2-4 deliverables. An AI mentor (powered by Gemini) guides you thr
 ## Quick Start (Local)
 
 ```bash
-git clone https://github.com/liradiego/aipl.git
+git clone https://github.com/lirad/aipl.git
 cd aipl
 npm install
 cp .env.example .env
@@ -59,13 +59,21 @@ Open http://localhost:3000
 
 ## Deploy to Cloud (Railway)
 
+> **What is Railway?** [Railway](https://railway.com) is a cloud platform that lets you deploy apps with zero DevOps. You connect your GitHub repo, Railway detects the language, builds, and runs it automatically. Think of it as "Vercel for full-stack apps" — you push code, it handles servers, databases, domains, and scaling. Free tier available for learning.
+
+> **What is Redis?** [Redis](https://redis.io) is an in-memory database — extremely fast because it stores data in RAM, not on disk. In AIPL, Redis stores analytics: session tracking, message counts, guardrail events, and latency metrics. It's the backbone of the Admin Dashboard. You don't need Redis for local mode — it's only used in cloud mode.
+
 [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/new/template?template=https%3A%2F%2Fgithub.com%2Flirad%2Faipl&envs=VITE_GEMINI_API_KEY&VITE_GEMINI_API_KEYDesc=Your+Gemini+API+key+from+aistudio.google.com%2Fapikey)
 
-The Railway template provisions:
-- Node.js service (Express + React)
-- Redis database (for analytics)
+Clicking the button above will:
+1. Fork this repo into your Railway account
+2. Provision a **Node.js service** (Express + React) and a **Redis database**
+3. Ask for your `VITE_GEMINI_API_KEY` (the same key from Google AI Studio)
+4. Build and deploy automatically — you'll get a public URL in ~2 minutes
 
-After deployment, add your `VITE_GEMINI_API_KEY` in Railway's environment variables.
+After deployment, you can also set these optional variables in Railway's dashboard:
+- `VITE_API_URL` — set to your Railway public URL (enables analytics)
+- `ADMIN_KEY` — protects the admin dashboard (any string you choose)
 
 ## Tech Stack
 
@@ -173,4 +181,4 @@ MIT — see [LICENSE](LICENSE).
 
 ---
 
-Built with love for Escola Tera by [Lira](https://github.com/liradiego)
+Built with love for Escola Tera by [Lira](https://github.com/lirad)
