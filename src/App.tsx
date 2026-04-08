@@ -25,77 +25,21 @@ import {
   RotateCcw,
   Loader2,
   Brain,
-  BookOpen
+  BookOpen,
+  Shield,
+  ThumbsUp,
+  ThumbsDown
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { cn } from './lib/utils';
-import { Phase, PHASES, Message, PHASE_DETAILS, Deliverable } from './types';
+import type { Phase, Message, Deliverable } from './types';
+import { PHASES } from './data/constants';
+import { PHASE_DETAILS } from './data/phases';
+import { buildPhaseWelcome, PHASE_ONBOARDING, PHASE_START_PROMPTS } from './data/prompts';
 import { getChatResponse, reformatDeliverableContent } from './services/gemini';
+import { startSession, heartbeat, trackMessage, trackPhaseComplete, trackLatency, trackFeedback } from './services/analytics';
 import DocumentExport from './DocumentExport';
-
-function buildPhaseWelcome(phase: Phase, allDeliverables: Record<Phase, Deliverable[]>): string {
-  const phaseIndex = PHASES.indexOf(phase);
-  const phaseInfo = PHASE_DETAILS.find(p => p.id === phase);
-  const deliverablesList = phaseInfo?.deliverables.map((d, i) => `${i + 1}. **${d.label}** — ${d.description}`).join('\n') || '';
-
-  // Build previous phase summary
-  let prevSummary = '';
-  if (phaseIndex > 0) {
-    const prevPhase = PHASES[phaseIndex - 1];
-    const prevDeliverables = allDeliverables[prevPhase] || [];
-    const completedItems = prevDeliverables.filter(d => d.status === 'completed');
-    if (completedItems.length > 0) {
-      prevSummary = `Na fase anterior (**${prevPhase}**), definimos:\n${completedItems.map(d => `- **${d.label}**: ${d.content ? d.content.slice(0, 120) + (d.content.length > 120 ? '...' : '') : 'Concluído'}`).join('\n')}\n\n`;
-    }
-  }
-
-  const PHASE_INTROS: Record<Phase, { emoji: string; objective: string }> = {
-    'Ideation': { emoji: '💡', objective: 'Vamos definir o problema, as personas e os casos de uso da sua solução de IA.' },
-    'Opportunity': { emoji: '🔍', objective: 'Agora vamos validar se a oportunidade tem viabilidade de mercado, analisar concorrentes e definir a estratégia de dados.' },
-    'Concept/Prototype': { emoji: '🛠️', objective: 'Hora de transformar a oportunidade em algo tangível — PoC, UX e baseline do modelo.' },
-    'Testing & Analysis': { emoji: '🧪', objective: 'Vamos avaliar a qualidade com métricas, testes com usuários e auditoria de viés.' },
-    'Roll-out': { emoji: '🚀', objective: 'Hora de preparar o lançamento — deployment, onboarding e infraestrutura.' },
-    'Monitoring': { emoji: '📊', objective: 'Fase final — dashboards de performance, detecção de drift e feedback loops.' }
-  };
-
-  const intro = PHASE_INTROS[phase];
-  const firstDeliverable = phaseInfo?.deliverables[0];
-
-  return `${prevSummary}Bem-vindo à fase **${phase}** ${intro.emoji}\n\n${intro.objective}\n\nEntregáveis desta fase:\n${deliverablesList}\n\nVamos começar pelo primeiro: **${firstDeliverable?.label}**. Clique no botão abaixo ou me diga por onde quer iniciar!`;
-}
-
-const PHASE_ONBOARDING: Record<Phase, { title: string; subtitle: string; cta: string }> = {
-  'Ideation': {
-    title: "Vamos Começar sua Ideação?",
-    subtitle: "Para começar, precisamos entender o problema que você quer resolver. Você pode colar uma transcrição ou iniciar uma entrevista guiada.",
-    cta: "Iniciar Entrevista Guiada"
-  },
-  'Opportunity': {
-    title: "Vamos Validar sua Oportunidade?",
-    subtitle: "Nesta fase, analisamos mercado, concorrentes, dados disponíveis e requisitos técnicos. Posso guiar você por cada entregável.",
-    cta: "Iniciar Descoberta de Oportunidade"
-  },
-  'Concept/Prototype': {
-    title: "Hora de Prototipar!",
-    subtitle: "Vamos construir o Proof of Concept, definir a UX e estabelecer o baseline do modelo de IA.",
-    cta: "Iniciar Prototipação"
-  },
-  'Testing & Analysis': {
-    title: "Vamos Testar e Analisar?",
-    subtitle: "Avaliaremos métricas de performance, resultados de testes com usuários e faremos a auditoria de viés e fairness.",
-    cta: "Iniciar Análise"
-  },
-  'Roll-out': {
-    title: "Preparar o Lançamento!",
-    subtitle: "Vamos definir o plano de deployment, materiais de onboarding e configuração de infraestrutura.",
-    cta: "Planejar Roll-out"
-  },
-  'Monitoring': {
-    title: "Configurar Monitoramento!",
-    subtitle: "Vamos definir dashboards, detecção de drift e feedback loops para melhoria contínua.",
-    cta: "Configurar Monitoramento"
-  }
-};
+import AdminDashboard from './AdminDashboard';
 
 const PHASE_ICONS: Record<Phase, React.ReactNode> = {
   'Ideation': <Lightbulb className="w-5 h-5" />,
@@ -117,7 +61,7 @@ const PHASE_ICONS_LG: Record<Phase, React.ReactNode> = {
 
 export default function App() {
   const [currentPhase, setCurrentPhase] = useState<Phase>('Ideation');
-  const [view, setView] = useState<'chat' | 'workspace' | 'document'>('chat');
+  const [view, setView] = useState<'chat' | 'workspace' | 'document' | 'admin'>('chat');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   
   // State for all phases
@@ -158,8 +102,19 @@ export default function App() {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [activeDeliverableId, setActiveDeliverableId] = useState<string | null>(null);
+  const [feedbackGiven, setFeedbackGiven] = useState<Record<string, 'positive' | 'negative'>>(() => {
+    const saved = localStorage.getItem('aipl_feedback');
+    return saved ? JSON.parse(saved) : {};
+  });
   const [isPreviewMode, setIsPreviewMode] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Analytics: session start + heartbeat
+  useEffect(() => {
+    startSession();
+    const interval = setInterval(() => heartbeat(currentPhase), 30000);
+    return () => clearInterval(interval);
+  }, [currentPhase]);
 
   // Inject dynamic welcome messages for phases that have no messages
   useEffect(() => {
@@ -168,7 +123,7 @@ export default function App() {
       if (!messagesByPhase[p] || messagesByPhase[p].length === 0) {
         updates[p] = [{
           role: 'model',
-          content: buildPhaseWelcome(p, deliverablesByPhase),
+          content: buildPhaseWelcome(p, deliverablesByPhase, PHASE_DETAILS),
           phase: p
         }];
       }
@@ -203,7 +158,7 @@ export default function App() {
   useEffect(() => {
     const msgs = messagesByPhase[currentPhase];
     if (msgs && msgs.length === 1 && msgs[0].role === 'model') {
-      const freshWelcome = buildPhaseWelcome(currentPhase, deliverablesByPhase);
+      const freshWelcome = buildPhaseWelcome(currentPhase, deliverablesByPhase, PHASE_DETAILS);
       if (msgs[0].content !== freshWelcome) {
         setMessagesByPhase(prev => ({
           ...prev,
@@ -218,7 +173,7 @@ export default function App() {
       ...prev,
       [currentPhase]: [{
         role: 'model',
-        content: buildPhaseWelcome(currentPhase, deliverablesByPhase),
+        content: buildPhaseWelcome(currentPhase, deliverablesByPhase, PHASE_DETAILS),
         phase: currentPhase
       }]
     }));
@@ -238,15 +193,6 @@ export default function App() {
     });
   };
 
-  const PHASE_START_PROMPTS: Record<Phase, string> = {
-    'Ideation': "Quero iniciar a entrevista de descoberta para detalhar o Problem Statement, Personas e Casos de Uso.",
-    'Opportunity': "Quero iniciar a descoberta de oportunidade. Me guie pelos entregáveis: Market Fit & ROI, Competitor Analysis, Data Strategy e Technical Requirements.",
-    'Concept/Prototype': "Quero iniciar a prototipação. Me ajude a definir o Proof of Concept, UX/UI e Baseline Model.",
-    'Testing & Analysis': "Quero iniciar a fase de testes. Me guie pelas métricas de performance, testes com usuários e auditoria de viés.",
-    'Roll-out': "Quero planejar o roll-out. Me ajude com o plano de deployment, onboarding e infraestrutura.",
-    'Monitoring': "Quero configurar o monitoramento. Me guie pelos dashboards, detecção de drift e feedback loops."
-  };
-
   const handleStartPhase = async () => {
     handleSend(PHASE_START_PROMPTS[currentPhase]);
   };
@@ -259,6 +205,17 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('aipl_deliverables', JSON.stringify(deliverablesByPhase));
   }, [deliverablesByPhase]);
+
+  useEffect(() => {
+    localStorage.setItem('aipl_feedback', JSON.stringify(feedbackGiven));
+  }, [feedbackGiven]);
+
+  const handleFeedback = (messageIndex: number, rating: 'positive' | 'negative') => {
+    const key = `${currentPhase}:${messageIndex}`;
+    setFeedbackGiven(prev => ({ ...prev, [key]: rating }));
+    const msg = currentMessages[messageIndex];
+    trackFeedback(currentPhase, rating, msg?.content || '');
+  };
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -341,20 +298,25 @@ export default function App() {
     setIsLoading(true);
 
     try {
+      trackMessage(currentPhase, 'user', textToSend);
+
       const history = [...messagesByPhase[currentPhase], userMessage].map(m => ({
         role: m.role as 'user' | 'model',
         parts: [{ text: m.content }]
       }));
 
       const responsePromise = getChatResponse(history, currentPhase, deliverablesByPhase);
-      
+
       // Increased timeout to 120s to handle complex reasoning or slow network (Google Search can be slow)
-      const timeoutPromise = new Promise((_, reject) => 
+      const timeoutPromise = new Promise((_, reject) =>
         setTimeout(() => reject(new Error("Timeout: A IA demorou muito para responder (120s).")), 120000)
       );
 
       console.log("Waiting for Gemini response (timeout set to 120s)...");
+      const startTime = Date.now();
       const response = await Promise.race([responsePromise, timeoutPromise]) as any;
+      trackLatency(Date.now() - startTime, currentPhase);
+      trackMessage(currentPhase, 'model', response.text);
       console.log("Full AI Response Object:", response);
       
       const modelMessage: Message = {
@@ -393,6 +355,7 @@ export default function App() {
           // Check if all are completed after update
           const allDone = updatedPhaseDeliverables.every(d => d.status === 'completed');
           if (allDone) {
+            trackPhaseComplete(currentPhase);
             // Add a small delay to let the user see the last response before the "congrats" message
             setTimeout(() => {
               const nextPhase = PHASES[PHASES.indexOf(currentPhase) + 1];
@@ -663,6 +626,16 @@ export default function App() {
                 <BookOpen className="w-3.5 h-3.5" />
                 Documento
               </button>
+              <button
+                onClick={() => setView('admin')}
+                className={cn(
+                  "flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-bold transition-all",
+                  view === 'admin' ? "bg-white text-emerald-600 shadow-sm" : "text-gray-500 hover:text-gray-700"
+                )}
+              >
+                <Shield className="w-3.5 h-3.5" />
+                Admin
+              </button>
             </div>
           </div>
           
@@ -686,7 +659,9 @@ export default function App() {
 
         {/* View Switcher */}
         <div className="flex-1 overflow-hidden flex flex-col">
-          {view === 'document' ? (
+          {view === 'admin' ? (
+            <AdminDashboard />
+          ) : view === 'document' ? (
             <DocumentExport deliverablesByPhase={deliverablesByPhase} />
           ) : view === 'chat' ? (
             <div className="flex-1 flex flex-col overflow-hidden">
@@ -805,6 +780,51 @@ export default function App() {
                             <ReactMarkdown>{message.content}</ReactMarkdown>
                           </div>
                         </div>
+                        {/* Feedback buttons for model messages (skip welcome message at index 0) */}
+                        {message.role === 'model' && index > 0 && (
+                          <div className="flex items-center gap-1 mt-1.5 ml-1">
+                            {(() => {
+                              const fbKey = `${currentPhase}:${index}`;
+                              const given = feedbackGiven[fbKey];
+                              return (
+                                <>
+                                  <button
+                                    onClick={() => handleFeedback(index, 'positive')}
+                                    className={cn(
+                                      "p-1.5 rounded-lg transition-all",
+                                      given === 'positive'
+                                        ? "bg-green-100 text-green-600"
+                                        : "text-gray-300 hover:text-green-500 hover:bg-green-50"
+                                    )}
+                                    title="Resposta util"
+                                  >
+                                    <ThumbsUp className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    onClick={() => handleFeedback(index, 'negative')}
+                                    className={cn(
+                                      "p-1.5 rounded-lg transition-all",
+                                      given === 'negative'
+                                        ? "bg-red-100 text-red-600"
+                                        : "text-gray-300 hover:text-red-500 hover:bg-red-50"
+                                    )}
+                                    title="Resposta nao ajudou"
+                                  >
+                                    <ThumbsDown className="w-3.5 h-3.5" />
+                                  </button>
+                                  {given && (
+                                    <span className={cn(
+                                      "text-[10px] font-bold ml-1",
+                                      given === 'positive' ? "text-green-500" : "text-red-500"
+                                    )}>
+                                      {given === 'positive' ? 'Obrigado!' : 'Vamos melhorar'}
+                                    </span>
+                                  )}
+                                </>
+                              );
+                            })()}
+                          </div>
+                        )}
                       </div>
                     </motion.div>
                   ))}
