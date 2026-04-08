@@ -2,7 +2,10 @@ import { useMemo } from 'react';
 import { Download, CheckCircle2, Clock, Wrench } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { cn } from './lib/utils';
-import { Phase, PHASES, PHASE_DETAILS, Deliverable, PHASE_LITERATURE } from './types';
+import type { Phase, Deliverable } from './types';
+import { PHASES } from './data/constants';
+import { PHASE_DETAILS } from './data/phases';
+import { PHASE_LITERATURE } from './data/tools';
 
 const PHASE_EMOJI: Record<Phase, string> = {
   'Ideation': '💡',
