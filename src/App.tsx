@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import { cn } from './lib/utils';
 import type { Phase, Message } from './types';
-import { PHASES } from './data/constants';
+import { PHASES, HEARTBEAT_INTERVAL_MS, STORAGE_KEYS } from './data/constants';
 import { startSession, heartbeat, trackFeedback } from './services/analytics';
 import { useLocalStorage } from './hooks/useLocalStorage';
 import { useDeliverables } from './hooks/useDeliverables';
@@ -44,7 +44,7 @@ export default function App() {
   const [view, setView] = useState<'chat' | 'workspace' | 'document' | 'admin'>('chat');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [activeDeliverableId, setActiveDeliverableId] = useState<string | null>(null);
-  const [feedbackGiven, setFeedbackGiven] = useLocalStorage<Record<string, 'positive' | 'negative'>>('aipl_feedback', {});
+  const [feedbackGiven, setFeedbackGiven] = useLocalStorage<Record<string, 'positive' | 'negative'>>(STORAGE_KEYS.feedback, {});
 
   const { deliverablesByPhase, setDeliverablesByPhase, resetPhaseDeliverables } = useDeliverables();
 
@@ -61,7 +61,8 @@ export default function App() {
     handleResetPhase: resetChatPhase,
   } = useChat({ currentPhase, setCurrentPhase, deliverablesByPhase, setDeliverablesByPhase, view });
 
-  useEffect(() => { startSession(); const i = setInterval(() => heartbeat(currentPhase), 30000); return () => clearInterval(i); }, [currentPhase]);
+  useEffect(() => { startSession(); }, []);
+  useEffect(() => { const i = setInterval(() => heartbeat(currentPhase), HEARTBEAT_INTERVAL_MS); return () => clearInterval(i); }, [currentPhase]);
 
   const handleResetPhase = () => { resetChatPhase(); resetPhaseDeliverables(currentPhase); };
   const handleFeedback = (idx: number, rating: 'positive' | 'negative') => {
@@ -99,7 +100,7 @@ export default function App() {
     return (c / currentDeliverables.length) * 100;
   }, [currentDeliverables]);
   const handleDeliverableSelect = (id: string) => { setView('workspace'); setActiveDeliverableId(id); };
-  const handleResetAll = () => { localStorage.removeItem('aipl_messages'); localStorage.removeItem('aipl_deliverables'); window.location.reload(); };
+  const handleResetAll = () => { localStorage.removeItem(STORAGE_KEYS.messages); localStorage.removeItem(STORAGE_KEYS.deliverables); window.location.reload(); };
 
   return (
     <div className="flex h-screen bg-[#F8F9FA] text-[#1A1A1A] font-sans overflow-hidden">

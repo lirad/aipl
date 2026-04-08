@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import type { Phase, Message, Deliverable } from '../types';
-import { PHASES } from '../data/constants';
+import { PHASES, STORAGE_KEYS, API_TIMEOUT_MS } from '../data/constants';
 import { PHASE_DETAILS } from '../data/phases';
 import { buildPhaseWelcome, PHASE_START_PROMPTS } from '../data/prompts';
 import { getChatResponse, reformatDeliverableContent } from '../services/gemini';
@@ -34,7 +34,7 @@ export function useChat({
   view,
 }: UseChatParams) {
   const [messagesByPhase, setMessagesByPhase] = useState<Record<Phase, Message[]>>(() => {
-    const saved = localStorage.getItem('aipl_messages');
+    const saved = localStorage.getItem(STORAGE_KEYS.messages);
     const initial: Record<string, Message[]> = saved ? JSON.parse(saved) : {};
 
     // Ensure every phase has at least an empty array (welcome messages injected via useEffect)
@@ -52,7 +52,7 @@ export function useChat({
 
   // Persist to localStorage
   useEffect(() => {
-    localStorage.setItem('aipl_messages', JSON.stringify(messagesByPhase));
+    localStorage.setItem(STORAGE_KEYS.messages, JSON.stringify(messagesByPhase));
   }, [messagesByPhase]);
 
   // Inject dynamic welcome messages for phases that have no messages
@@ -179,17 +179,14 @@ export function useChat({
 
       const responsePromise = getChatResponse(history, currentPhase, deliverablesByPhase);
 
-      // Increased timeout to 120s to handle complex reasoning or slow network (Google Search can be slow)
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("Timeout: A IA demorou muito para responder (120s).")), 120000)
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("Timeout: AI took too long to respond.")), API_TIMEOUT_MS)
       );
 
-      console.log("Waiting for Gemini response (timeout set to 120s)...");
       const startTime = Date.now();
-      const response = await Promise.race([responsePromise, timeoutPromise]) as any;
+      const response = await Promise.race([responsePromise, timeoutPromise]);
       trackLatency(Date.now() - startTime, currentPhase);
       trackMessage(currentPhase, 'model', response.text);
-      console.log("Full AI Response Object:", response);
 
       const modelMessage: Message = {
         role: 'model',

@@ -152,8 +152,7 @@ export default function MetricsOverview({ dashboard }: MetricsOverviewProps) {
             Usuarios Ativos Diarios (7 dias)
           </h3>
           <div className="flex items-end gap-2 h-32">
-            {dashboard.dau.map((d, i) => {
-              const maxDau = Math.max(...dashboard.dau.map(x => x.count), 1);
+            {(() => { const maxDau = Math.max(...dashboard.dau.map(x => x.count), 1); return dashboard.dau.map((d, i) => {
               const pct = (d.count / maxDau) * 100;
               return (
                 <div key={i} className="flex-1 flex flex-col items-center gap-1">
@@ -167,7 +166,7 @@ export default function MetricsOverview({ dashboard }: MetricsOverviewProps) {
                   <span className="text-[9px] text-gray-400">{d.date.slice(5)}</span>
                 </div>
               );
-            })}
+            }); })()}
           </div>
         </div>
       )}

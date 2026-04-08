@@ -1,6 +1,7 @@
 import { GoogleGenAI, Type, Modality } from "@google/genai";
 import type { Phase, Deliverable } from "../types";
 import { PHASE_DETAILS } from "../data/phases";
+import { MAX_MESSAGES_CONTEXT } from "../data/constants";
 
 const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY || '' });
 
@@ -61,8 +62,7 @@ export async function getChatResponse(
   // Using Flash for both modes to ensure speed and avoid timeouts as requested
   const model = "gemini-3-flash-preview";
   
-  // Limit history to last 10 messages to keep it fast and avoid context bloat
-  const limitedMessages = messages.slice(-10);
+  const limitedMessages = messages.slice(-MAX_MESSAGES_CONTEXT);
   
   const phaseInfo = PHASE_DETAILS.find(p => p.id === currentPhase);
   const currentDeliverablesList = phaseInfo?.deliverables.map(d => `- **${d.id}** (${d.label}): ${d.description}\n  *Sugestão:* ${d.suggestion.replace(/### .*\n/, '')}\n  *Dica de Especialista:* ${d.expertTip}`).join('\n\n') || '';
@@ -150,12 +150,6 @@ Exemplo:
 "**Dor do Usuário:** Proprietários perdem tempo.\\n\\n**Dados:** Logs de orçamentos disponíveis.\\n\\n**Viabilidade:** API do GPT-4o resolve.\\n\\n**Valor:** Economia de 15% no orçamento."`;
 
 
-  console.log("--- Gemini API Call Start ---");
-  console.log("Model:", model);
-  console.log("Phase:", currentPhase);
-  console.log("History Length:", limitedMessages.length);
-  console.log("System Instruction Length:", systemInstruction.length);
-  
   try {
     const response = await ai.models.generateContent({
       model,
@@ -185,25 +179,19 @@ Exemplo:
       },
     });
 
-    console.log("Gemini raw response text:", response.text);
     const text = response.text || "{}";
     try {
-      const parsed = JSON.parse(text);
-      console.log("--- Gemini API Call Success ---", parsed);
-      return parsed;
-    } catch (parseError) {
-      console.error("JSON Parse Error:", parseError, "Raw text:", text);
-      // Attempt to extract JSON if it's wrapped in markdown
+      return JSON.parse(text);
+    } catch {
+      // Attempt to extract JSON if wrapped in markdown
       const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/) || text.match(/{[\s\S]*}/);
       if (jsonMatch) {
-        const extracted = JSON.parse(jsonMatch[1] || jsonMatch[0]);
-        console.log("--- Gemini API Call Success (Extracted) ---", extracted);
-        return extracted;
+        return JSON.parse(jsonMatch[1] || jsonMatch[0]);
       }
-      throw parseError;
+      throw new Error("Failed to parse Gemini response as JSON");
     }
   } catch (error) {
-    console.error("--- Gemini API Call Error ---", error);
+    if (import.meta.env.DEV) console.error("[Gemini]", error);
     // Fallback to a simple response if JSON parsing fails or API fails
     return { 
       text: "Desculpe, tive um problema técnico. Poderia repetir o que disse?",

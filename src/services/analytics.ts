@@ -1,4 +1,5 @@
 import type { Phase } from '../types';
+import { STORAGE_KEYS } from '../data/constants';
 
 // In cloud mode, VITE_API_URL points to the backend.
 // In local mode (no VITE_API_URL), analytics are silent no-ops.
@@ -6,10 +7,10 @@ const API_URL = import.meta.env.VITE_API_URL || '';
 const API_AVAILABLE = Boolean(API_URL);
 
 function getSessionId(): string {
-  let sid = localStorage.getItem('aipl_session_id');
+  let sid = localStorage.getItem(STORAGE_KEYS.sessionId);
   if (!sid) {
     sid = crypto.randomUUID();
-    localStorage.setItem('aipl_session_id', sid);
+    localStorage.setItem(STORAGE_KEYS.sessionId, sid);
   }
   return sid;
 }
@@ -67,8 +68,13 @@ export function trackLatency(latencyMs: number, phase: Phase) {
 // Admin fetchers — return null in local mode
 async function adminFetch(path: string) {
   if (!API_AVAILABLE) return null;
-  const res = await fetch(`${API_URL}${path}`);
-  return res.json();
+  try {
+    const res = await fetch(`${API_URL}${path}`);
+    if (!res.ok) return null;
+    return res.json();
+  } catch {
+    return null;
+  }
 }
 
 export function fetchDashboard() { return adminFetch('/api/admin/dashboard'); }

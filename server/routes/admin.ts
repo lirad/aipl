@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { redis } from '../services/redis';
+import { VALID_PHASES } from '../middleware/validation';
 
 const router = Router();
 
@@ -13,27 +14,28 @@ router.use((req, res, next) => {
 });
 
 router.get('/dashboard', async (req, res) => {
-  // Clean stale sessions (inactive for > 5 min)
   const activeSessionIds = await redis.smembers('sessions:active');
   const now = Date.now();
-  let activeCount = 0;
 
-  for (const sid of activeSessionIds) {
-    const lastActive = await redis.hget(`session:${sid}`, 'lastActive');
+  // Fetch all session timestamps in parallel (avoids N+1)
+  const sessionTimestamps = await Promise.all(
+    activeSessionIds.map(sid => redis.hget(`session:${sid}`, 'lastActive'))
+  );
+  let activeCount = 0;
+  for (let i = 0; i < activeSessionIds.length; i++) {
+    const lastActive = sessionTimestamps[i];
     if (!lastActive || now - parseInt(lastActive) > 300000) {
-      await redis.srem('sessions:active', sid);
+      await redis.srem('sessions:active', activeSessionIds[i]);
     } else {
       activeCount++;
     }
   }
 
+  // Batch all independent metric reads
   const [
-    totalUsers,
-    totalMessages,
-    totalCompletions,
-    guardrailsTotal,
-    guardrailsInput,
-    guardrailsOutput,
+    totalUsers, totalMessages, totalCompletions,
+    guardrailsTotal, guardrailsInput, guardrailsOutput,
+    feedbackPositive, feedbackNegative,
   ] = await Promise.all([
     redis.get('metrics:users:total'),
     redis.get('metrics:messages:total'),
@@ -41,31 +43,35 @@ router.get('/dashboard', async (req, res) => {
     redis.get('metrics:guardrails:total'),
     redis.get('metrics:guardrails:input'),
     redis.get('metrics:guardrails:output'),
+    redis.get('metrics:feedback:positive'),
+    redis.get('metrics:feedback:negative'),
   ]);
 
-  // Phase completion counts
-  const phases = ['Ideation', 'Opportunity', 'Concept/Prototype', 'Testing & Analysis', 'Roll-out', 'Monitoring'];
+  // Phase metrics in parallel
+  const [phaseCompletionValues, phaseMessageValues] = await Promise.all([
+    Promise.all(VALID_PHASES.map(p => redis.get(`metrics:phase:${p}:completions`))),
+    Promise.all(VALID_PHASES.map(p => redis.get(`metrics:messages:phase:${p}`))),
+  ]);
   const phaseCompletions: Record<string, number> = {};
   const phaseMessages: Record<string, number> = {};
-  for (const p of phases) {
-    phaseCompletions[p] = parseInt((await redis.get(`metrics:phase:${p}:completions`)) || '0');
-    phaseMessages[p] = parseInt((await redis.get(`metrics:messages:phase:${p}`)) || '0');
-  }
+  VALID_PHASES.forEach((p, i) => {
+    phaseCompletions[p] = parseInt(phaseCompletionValues[i] || '0');
+    phaseMessages[p] = parseInt(phaseMessageValues[i] || '0');
+  });
 
   // Latency stats
-  const latencySamples = (await redis.lrange('metrics:latency:samples', 0, -1)).map(Number);
+  const latencySamples = (await redis.lrange('metrics:latency:samples', 0, 199)).map(Number);
   const avgLatency = latencySamples.length > 0
     ? Math.round(latencySamples.reduce((a, b) => a + b, 0) / latencySamples.length)
     : 0;
   const maxLatency = latencySamples.length > 0 ? Math.max(...latencySamples) : 0;
 
-  // DAU for last 7 days
-  const dau: { date: string; count: number }[] = [];
-  for (let i = 6; i >= 0; i--) {
-    const d = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10);
-    const count = await redis.scard(`metrics:dau:${d}`);
-    dau.push({ date: d, count });
-  }
+  // DAU for last 7 days in parallel
+  const dauDates = Array.from({ length: 7 }, (_, i) =>
+    new Date(Date.now() - (6 - i) * 86400000).toISOString().slice(0, 10)
+  );
+  const dauCounts = await Promise.all(dauDates.map(d => redis.scard(`metrics:dau:${d}`)));
+  const dau = dauDates.map((date, i) => ({ date, count: dauCounts[i] }));
 
   res.json({
     kpis: {
@@ -76,8 +82,8 @@ router.get('/dashboard', async (req, res) => {
       guardrailsTriggered: parseInt(guardrailsTotal || '0'),
       guardrailsInput: parseInt(guardrailsInput || '0'),
       guardrailsOutput: parseInt(guardrailsOutput || '0'),
-      feedbackPositive: parseInt((await redis.get('metrics:feedback:positive')) || '0'),
-      feedbackNegative: parseInt((await redis.get('metrics:feedback:negative')) || '0'),
+      feedbackPositive: parseInt(feedbackPositive || '0'),
+      feedbackNegative: parseInt(feedbackNegative || '0'),
     },
     phaseCompletions,
     phaseMessages,
@@ -88,25 +94,29 @@ router.get('/dashboard', async (req, res) => {
 
 router.get('/users', async (req, res) => {
   const activeSessionIds = await redis.smembers('sessions:active');
-  const users = [];
+  const now = Date.now();
 
-  for (const sid of activeSessionIds) {
-    const data = await redis.hgetall(`session:${sid}`);
-    if (data && data.lastActive) {
-      const isActive = Date.now() - parseInt(data.lastActive) < 300000;
-      if (isActive) {
-        users.push({
-          sessionId: sid.slice(0, 8) + '...',
-          currentPhase: data.currentPhase || 'Ideation',
-          messageCount: parseInt(data.messageCount || '0'),
-          startedAt: parseInt(data.startedAt || '0'),
-          lastActive: parseInt(data.lastActive || '0'),
-        });
-      }
-    }
-  }
+  // Fetch all session data in parallel (avoids N+1)
+  const sessionDataList = await Promise.all(
+    activeSessionIds.map(sid => redis.hgetall(`session:${sid}`))
+  );
 
-  users.sort((a, b) => b.lastActive - a.lastActive);
+  const users = sessionDataList
+    .map((data, i) => {
+      if (!data?.lastActive) return null;
+      const isActive = now - parseInt(data.lastActive) < 300000;
+      if (!isActive) return null;
+      return {
+        sessionId: activeSessionIds[i].slice(0, 8) + '...',
+        currentPhase: data.currentPhase || 'Ideation',
+        messageCount: parseInt(data.messageCount || '0'),
+        startedAt: parseInt(data.startedAt || '0'),
+        lastActive: parseInt(data.lastActive || '0'),
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b!.lastActive - a!.lastActive);
+
   res.json({ users, total: users.length });
 });
 
@@ -116,26 +126,34 @@ router.get('/guardrails', async (req, res) => {
 });
 
 router.get('/activity', async (req, res) => {
-  const messages = (await redis.lrange('log:messages', 0, 49)).map(s => JSON.parse(s));
-  const completions = (await redis.lrange('log:completions', 0, 29)).map(s => JSON.parse(s));
+  const [messages, completions] = await Promise.all([
+    redis.lrange('log:messages', 0, 49).then(list => list.map(s => JSON.parse(s))),
+    redis.lrange('log:completions', 0, 29).then(list => list.map(s => JSON.parse(s))),
+  ]);
   res.json({ messages, completions });
 });
 
 router.get('/feedback', async (req, res) => {
-  const [totalFeedback, positive, negative] = await Promise.all([
+  // Batch all reads in parallel
+  const feedbackKeys = VALID_PHASES.flatMap(p => [
+    `metrics:feedback:phase:${p}:positive`,
+    `metrics:feedback:phase:${p}:negative`,
+  ]);
+
+  const [totalFeedback, positive, negative, ...phaseValues] = await Promise.all([
     redis.get('metrics:feedback:total'),
     redis.get('metrics:feedback:positive'),
     redis.get('metrics:feedback:negative'),
+    ...feedbackKeys.map(k => redis.get(k)),
   ]);
 
-  const phases = ['Ideation', 'Opportunity', 'Concept/Prototype', 'Testing & Analysis', 'Roll-out', 'Monitoring'];
   const byPhase: Record<string, { positive: number; negative: number }> = {};
-  for (const p of phases) {
+  VALID_PHASES.forEach((p, i) => {
     byPhase[p] = {
-      positive: parseInt((await redis.get(`metrics:feedback:phase:${p}:positive`)) || '0'),
-      negative: parseInt((await redis.get(`metrics:feedback:phase:${p}:negative`)) || '0'),
+      positive: parseInt(phaseValues[i * 2] || '0'),
+      negative: parseInt(phaseValues[i * 2 + 1] || '0'),
     };
-  }
+  });
 
   const logs = (await redis.lrange('log:feedback', 0, 49)).map(s => JSON.parse(s));
 

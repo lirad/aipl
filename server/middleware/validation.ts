@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { Request, Response, NextFunction } from 'express';
 
-const VALID_PHASES = [
+export const VALID_PHASES = [
   'Ideation', 'Opportunity', 'Concept/Prototype',
   'Testing & Analysis', 'Roll-out', 'Monitoring',
 ] as const;
