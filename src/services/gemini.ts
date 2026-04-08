@@ -3,7 +3,12 @@ import type { Phase, Deliverable } from "../types";
 import { PHASE_DETAILS } from "../data/phases";
 import { MAX_MESSAGES_CONTEXT } from "../data/constants";
 
-const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY || '' });
+const API_KEY = import.meta.env.VITE_GEMINI_API_KEY || '';
+
+/** True when a Gemini API key is configured */
+export const isGeminiConfigured = Boolean(API_KEY);
+
+const ai = new GoogleGenAI({ apiKey: API_KEY });
 
 export async function reformatDeliverableContent(content: string, label: string): Promise<string> {
   try {
