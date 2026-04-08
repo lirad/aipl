@@ -65,16 +65,12 @@ export function trackLatency(latencyMs: number, phase: Phase) {
   post('/api/track/latency', { latencyMs, phase });
 }
 
-// Admin fetchers — return null in local mode
+// Admin fetchers — return null in local mode, throw on errors in cloud mode
 async function adminFetch(path: string) {
   if (!API_AVAILABLE) return null;
-  try {
-    const res = await fetch(`${API_URL}${path}`);
-    if (!res.ok) return null;
-    return res.json();
-  } catch {
-    return null;
-  }
+  const res = await fetch(`${API_URL}${path}`);
+  if (!res.ok) throw new Error(`Admin fetch failed: ${res.status} ${path}`);
+  return res.json();
 }
 
 export function fetchDashboard() { return adminFetch('/api/admin/dashboard'); }

@@ -23,7 +23,7 @@ Regras:
     });
     return response.text?.trim() || content;
   } catch (error) {
-    console.error("Error reformatting content:", error);
+    if (import.meta.env.DEV) console.error("[Gemini] reformat error:", error);
     return content;
   }
 }
@@ -48,7 +48,7 @@ export async function generateSpeech(text: string) {
       return base64Audio;
     }
   } catch (error) {
-    console.error("Error generating speech:", error);
+    if (import.meta.env.DEV) console.error("[Gemini] speech error:", error);
   }
   return null;
 }

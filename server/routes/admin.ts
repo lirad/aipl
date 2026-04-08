@@ -5,6 +5,7 @@ import { VALID_PHASES } from '../middleware/validation';
 const router = Router();
 
 const ADMIN_KEY = process.env.ADMIN_KEY;
+const SESSION_ACTIVE_WINDOW_MS = 300_000; // 5 minutes
 
 router.use((req, res, next) => {
   if (ADMIN_KEY && req.query.key !== ADMIN_KEY) {
@@ -21,14 +22,18 @@ router.get('/dashboard', async (req, res) => {
   const sessionTimestamps = await Promise.all(
     activeSessionIds.map(sid => redis.hget(`session:${sid}`, 'lastActive'))
   );
+  const staleIds: string[] = [];
   let activeCount = 0;
   for (let i = 0; i < activeSessionIds.length; i++) {
     const lastActive = sessionTimestamps[i];
-    if (!lastActive || now - parseInt(lastActive) > 300000) {
-      await redis.srem('sessions:active', activeSessionIds[i]);
+    if (!lastActive || now - parseInt(lastActive) > SESSION_ACTIVE_WINDOW_MS) {
+      staleIds.push(activeSessionIds[i]);
     } else {
       activeCount++;
     }
+  }
+  if (staleIds.length > 0) {
+    await redis.srem('sessions:active', ...staleIds);
   }
 
   // Batch all independent metric reads
@@ -59,18 +64,18 @@ router.get('/dashboard', async (req, res) => {
     phaseMessages[p] = parseInt(phaseMessageValues[i] || '0');
   });
 
-  // Latency stats
-  const latencySamples = (await redis.lrange('metrics:latency:samples', 0, 199)).map(Number);
+  // Latency + DAU in parallel
+  const dauDates = Array.from({ length: 7 }, (_, i) =>
+    new Date(Date.now() - (6 - i) * 86400000).toISOString().slice(0, 10)
+  );
+  const [latencySamples, dauCounts] = await Promise.all([
+    redis.lrange('metrics:latency:samples', 0, 199).then(list => list.map(Number)),
+    Promise.all(dauDates.map(d => redis.scard(`metrics:dau:${d}`))),
+  ]);
   const avgLatency = latencySamples.length > 0
     ? Math.round(latencySamples.reduce((a, b) => a + b, 0) / latencySamples.length)
     : 0;
   const maxLatency = latencySamples.length > 0 ? Math.max(...latencySamples) : 0;
-
-  // DAU for last 7 days in parallel
-  const dauDates = Array.from({ length: 7 }, (_, i) =>
-    new Date(Date.now() - (6 - i) * 86400000).toISOString().slice(0, 10)
-  );
-  const dauCounts = await Promise.all(dauDates.map(d => redis.scard(`metrics:dau:${d}`)));
   const dau = dauDates.map((date, i) => ({ date, count: dauCounts[i] }));
 
   res.json({
@@ -104,7 +109,7 @@ router.get('/users', async (req, res) => {
   const users = sessionDataList
     .map((data, i) => {
       if (!data?.lastActive) return null;
-      const isActive = now - parseInt(data.lastActive) < 300000;
+      const isActive = now - parseInt(data.lastActive) < SESSION_ACTIVE_WINDOW_MS;
       if (!isActive) return null;
       return {
         sessionId: activeSessionIds[i].slice(0, 8) + '...',
