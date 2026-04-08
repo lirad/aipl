@@ -41,7 +41,7 @@ import { useLocalStorage } from './hooks/useLocalStorage';
 import { useDeliverables } from './hooks/useDeliverables';
 import { useChat } from './hooks/useChat';
 import DocumentExport from './DocumentExport';
-import AdminDashboard from './AdminDashboard';
+import AdminDashboard from './components/admin/AdminDashboard';
 
 const PHASE_ICONS: Record<Phase, React.ReactNode> = {
   'Ideation': <Lightbulb className="w-5 h-5" />,
