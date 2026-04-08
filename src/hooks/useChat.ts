@@ -253,7 +253,7 @@ export function useChat({
         });
       }
     } catch (error) {
-      console.error("Error getting chat response:", error);
+      if (import.meta.env.DEV) console.error("[Chat] Error:", error);
       const errorMessage = error instanceof Error ? error.message : "Desculpe, ocorreu um erro ao processar sua mensagem.";
       setMessagesByPhase(prev => ({
         ...prev,
